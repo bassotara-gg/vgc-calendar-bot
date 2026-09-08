@@ -74,14 +74,12 @@ async def import_history(channel):
 
     async for message in channel.history(limit=None):
         checked += 1
-        event = parse_pokedata_message(message)
-        if not event or not region_allowed(event["region"]):
-            continue
-        changed = db.upsert_event(event)
-        if changed:
-            # We cannot distinguish INSERT/UPDATE without another DB query;
-            # for the user-facing result, count it as imported/updated.
-            imported += 1
+        events = parse_pokedata_message(message)
+        for event in events:
+            if not region_allowed(event["region"]):
+                continue
+            if db.upsert_event(event):
+                imported += 1
 
     await refresh_calendar()
     return checked, imported, updated
@@ -101,12 +99,16 @@ async def on_ready():
 @bot.event
 async def on_message(message: discord.Message):
     if message.channel.id == EVENT_CHANNEL_ID:
-        event = parse_pokedata_message(message)
-        if event and region_allowed(event["region"]):
-            changed = db.upsert_event(event)
-            if changed:
-                print(f"Evento salvato/aggiornato: {event['name']} ({event['date']})")
-                await refresh_calendar()
+        events = parse_pokedata_message(message)
+        changed_any = False
+        for event in events:
+            if region_allowed(event["region"]):
+                changed = db.upsert_event(event)
+                changed_any = changed_any or changed
+                if changed:
+                    print(f"Evento salvato/aggiornato: {event['name']} ({event['date']})")
+        if changed_any:
+            await refresh_calendar()
 
     await bot.process_commands(message)
 

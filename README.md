@@ -76,3 +76,7 @@ impostate in `ALLOWED_REGIONS`).
 
 Il bot deve avere **View Channel**, **Read Message History** e **Read Message Content**
 sul canale Pokedata.
+
+
+## Partecipazione
+Aprendo un evento dal calendario si può scegliere 🟢 Partecipo, 🟡 Forse o 🔴 Non partecipo. La risposta è modificabile e viene salvata nel database. `👥 Chi partecipa?` mostra gli elenchi.
