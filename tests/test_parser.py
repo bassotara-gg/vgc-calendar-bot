@@ -1,76 +1,120 @@
+from types import SimpleNamespace
+
 from pokedata_parser import parse_pokedata_message
 
-class FakeMessage:
-    id = 123456
-    content = """[League Cup VG](https://www.pokemon.com/us/pokemon-trainer-club/play-pokemon-tournaments/26-10-004173/)
 
-**cup VGC 11-10-2026** [https://www.pokemon.com/us/pokemon-trainer-club/play-pokemon-tournaments/26-10-004173/](https://www.pokemon.com/us/pokemon-trainer-club/play-pokemon-tournaments/26-10-004173/)
-
-IL COVO DEL NERD ERBA
-
-**Country**
-
-IT
-
-**State**
-
-Lombardia
-
-**Address**
-
-CORSO XXV APRILE, 74, 22036 ERBA CO, ITALY
-
-**Date**
-
-2026-10-11
-
-**City**
-
-Erba
-"""
-
-def test_cup():
-    e = parse_pokedata_message(FakeMessage())
-    assert e["type"] == "cup"
-    assert e["date"] == "2026-10-11"
-    assert e["city"] == "Erba"
-    assert e["region"] == "Lombardia"
-    assert e["pokedata_id"] == "26-10-004173"
+def make_embed(title, description, **fields):
+    return SimpleNamespace(
+        title=title,
+        description=description,
+        url=None,
+        fields=[SimpleNamespace(name=name, value=value) for name, value in fields.items()],
+    )
 
 
-class FakeChallenge:
-    id = 123457
-    content = """[League Challenge VG](https://www.pokemon.com/us/pokemon-trainer-club/play-pokemon-tournaments/26-10-004171/)
+def test_embed_cup():
+    message = SimpleNamespace(
+        id=1435435444081791058,
+        content="",
+        embeds=[make_embed(
+            "league Cup VCG Infinity\nhttps://www.pokemon.com/us/pokemon-trainer-club/play-pokemon-tournaments/25-12-003934/",
+            "MAGIC LAIR",
+            Country="IT",
+            State="Piedmont",
+            Address="14/F CORSO PRINCIPE ODDONE, TORINO, PIEMONTE 10122, IT",
+            Date="2025-12-07",
+            City="Turin",
+        )],
+    )
 
-**Play!OnGame League Challenge 10** [https://www.pokemon.com/us/pokemon-trainer-club/play-pokemon-tournaments/26-10-004171/](https://www.pokemon.com/us/pokemon-trainer-club/play-pokemon-tournaments/26-10-004171/)
+    events = parse_pokedata_message(message)
+    assert len(events) == 1
+    event = events[0]
+    assert event["type"] == "cup"
+    assert event["name"] == "league Cup VCG Infinity"
+    assert event["organizer"] == "MAGIC LAIR"
+    assert event["date"] == "2025-12-07"
+    assert event["city"] == "Turin"
+    assert event["region"] == "Piedmont"
+    assert event["pokedata_id"] == "25-12-003934"
 
-ONGAME MONTESILVANO
 
-**Country**
+def test_embed_challenge():
+    message = SimpleNamespace(
+        id=1422275428139139233,
+        content="",
+        embeds=[make_embed(
+            "VG League Challenge Ottobre\nhttps://www.pokemon.com/us/pokemon-trainer-club/play-pokemon-tournaments/25-10-004290/",
+            "MAGIC HISTORY",
+            Country="IT",
+            State="Umbria",
+            Address="52 VIA CADUTI DEL LAVORO, PERUGIA, UMBRIA 06124, IT",
+            Date="2025-10-12",
+            City="Perugia",
+        )],
+    )
 
-IT
+    events = parse_pokedata_message(message)
+    assert len(events) == 1
+    event = events[0]
+    assert event["type"] == "challenge"
+    assert event["organizer"] == "MAGIC HISTORY"
+    assert event["pokedata_id"] == "25-10-004290"
 
-**State**
 
-Abruzzo
+def test_multiple_embeds_in_one_message():
+    message = SimpleNamespace(
+        id=999,
+        content="",
+        embeds=[
+            make_embed(
+                "League Challenge VG Ottobre LA TANA\nhttps://www.pokemon.com/us/pokemon-trainer-club/play-pokemon-tournaments/26-10-005540/",
+                "LA TANA",
+                Country="IT", State="Umbria", Address="Via Test 1", Date="2026-10-24", City="Terni",
+            ),
+            make_embed(
+                "VGC League Challenge\nhttps://www.pokemon.com/us/pokemon-trainer-club/play-pokemon-tournaments/26-09-014680/",
+                "COLLECTOR PLAZA",
+                Country="IT", State="Piemonte", Address="Via Test 2", Date="2026-09-19", City="Torino",
+            ),
+            make_embed(
+                "League Challenge VG Settembre LA TANA\nhttps://www.pokemon.com/us/pokemon-trainer-club/play-pokemon-tournaments/26-09-014739/",
+                "LA TANA",
+                Country="IT", State="Umbria", Address="Via Test 3", Date="2026-09-26", City="Terni",
+            ),
+            make_embed(
+                "League Challenge VG Novembre LA TANA\nhttps://www.pokemon.com/us/pokemon-trainer-club/play-pokemon-tournaments/26-11-004326/",
+                "LA TANA",
+                Country="IT", State="Umbria", Address="Via Test 4", Date="2026-11-15", City="Terni",
+            ),
+            make_embed(
+                "League CUP VG Novembre LA TANA\nhttps://www.pokemon.com/us/pokemon-trainer-club/play-pokemon-tournaments/26-11-004323/",
+                "LA TANA",
+                Country="IT", State="Umbria", Address="Via Test 5", Date="2026-11-15", City="Terni",
+            ),
+        ],
+    )
 
-**Address**
+    events = parse_pokedata_message(message)
+    assert len(events) == 5
+    assert {event["pokedata_id"] for event in events} == {
+        "26-10-005540",
+        "26-09-014680",
+        "26-09-014739",
+        "26-11-004326",
+        "26-11-004323",
+    }
+    assert sum(event["region"] == "Umbria" for event in events) == 4
 
-VIA SAN FRANCESCO, 3, 65015 MONTESILVANO PE, ITALY
 
-**Date**
+def test_old_text_format_still_works():
+    message = SimpleNamespace(
+        id=123456,
+        content="""[League Cup VG](https://www.pokemon.com/us/pokemon-trainer-club/play-pokemon-tournaments/26-10-004173/)\n\n**cup VGC 11-10-2026** [https://www.pokemon.com/us/pokemon-trainer-club/play-pokemon-tournaments/26-10-004173/](https://www.pokemon.com/us/pokemon-trainer-club/play-pokemon-tournaments/26-10-004173/)\n\nIL COVO DEL NERD ERBA\n\n**Country**\n\nIT\n\n**State**\n\nLombardia\n\n**Address**\n\nCORSO XXV APRILE, 74, 22036 ERBA CO, ITALY\n\n**Date**\n\n2026-10-11\n\n**City**\n\nErba\n""",
+        embeds=[],
+    )
 
-2026-10-16
-
-**City**
-
-Montesilvano
-"""
-
-def test_challenge():
-    e = parse_pokedata_message(FakeChallenge())
-    assert e["type"] == "challenge"
-    assert e["date"] == "2026-10-16"
-    assert e["city"] == "Montesilvano"
-    assert e["region"] == "Abruzzo"
-    assert e["pokedata_id"] == "26-10-004171"
+    events = parse_pokedata_message(message)
+    assert len(events) == 1
+    assert events[0]["type"] == "cup"
+    assert events[0]["pokedata_id"] == "26-10-004173"

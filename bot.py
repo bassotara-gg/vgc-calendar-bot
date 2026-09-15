@@ -1,10 +1,13 @@
-
 import os
+from dotenv import load_dotenv
+
 import discord
 from discord.ext import commands
 from database import Database
 from pokedata_parser import parse_pokedata_message
-from calendar_view import CalendarView, build_calendar_embed
+from calendar_view import CalendarView, build_calendar_embed, DEFAULT_REGIONS
+
+load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 EVENT_CHANNEL_ID = int(os.getenv("EVENT_CHANNEL_ID", "0"))
@@ -32,10 +35,6 @@ db = Database("vgc_calendar.db")
 calendar_message_id = None
 
 
-def region_allowed(region: str) -> bool:
-    return region.strip().casefold() in ALLOWED_REGIONS
-
-
 async def refresh_calendar():
     global calendar_message_id
     channel = bot.get_channel(CALENDAR_CHANNEL_ID)
@@ -43,7 +42,9 @@ async def refresh_calendar():
         channel = await bot.fetch_channel(CALENDAR_CHANNEL_ID)
 
     events = db.get_all_events()
-    embed = build_calendar_embed(events)
+    # Il calendario nasce con i tre filtri regionali preimpostati.
+    # Le altre regioni restano disponibili dal selettore.
+    embed = build_calendar_embed(events, region=DEFAULT_REGIONS)
     message = None
 
     if calendar_message_id:
@@ -59,7 +60,10 @@ async def refresh_calendar():
                 calendar_message_id = m.id
                 break
 
-    view = CalendarView(db, allowed_regions=ALLOWED_REGIONS)
+    # ALLOWED_REGIONS is intentionally NOT passed here: it is kept as the
+    # default region set for /vgc_prossimi, while the interactive calendar
+    # can browse all Italian regions selected from its dropdown.
+    view = CalendarView(db, allowed_regions=None)
     if message is None:
         message = await channel.send(embed=embed, view=view)
         calendar_message_id = message.id
@@ -69,20 +73,19 @@ async def refresh_calendar():
 
 async def import_history(channel):
     imported = 0
-    updated = 0
     checked = 0
 
     async for message in channel.history(limit=None):
         checked += 1
         events = parse_pokedata_message(message)
         for event in events:
-            if not region_allowed(event["region"]):
-                continue
+            # Import ALL parsed events. Region filtering now happens only in
+            # the calendar UI, so new regions do not require code changes.
             if db.upsert_event(event):
                 imported += 1
 
     await refresh_calendar()
-    return checked, imported, updated
+    return checked, imported
 
 
 @bot.event
@@ -102,11 +105,12 @@ async def on_message(message: discord.Message):
         events = parse_pokedata_message(message)
         changed_any = False
         for event in events:
-            if region_allowed(event["region"]):
-                changed = db.upsert_event(event)
-                changed_any = changed_any or changed
-                if changed:
-                    print(f"Evento salvato/aggiornato: {event['name']} ({event['date']})")
+            # Same rule as history import: store every parsed event. The UI
+            # decides which regions are currently displayed.
+            changed = db.upsert_event(event)
+            changed_any = changed_any or changed
+            if changed:
+                print(f"Evento salvato/aggiornato: {event['name']} ({event['date']})")
         if changed_any:
             await refresh_calendar()
 
@@ -115,10 +119,10 @@ async def on_message(message: discord.Message):
 
 @bot.tree.command(name="vgc", description="Mostra il calendario VGC")
 async def vgc(interaction: discord.Interaction):
-    embed = build_calendar_embed(db.get_all_events())
+    embed = build_calendar_embed(db.get_all_events(), region=DEFAULT_REGIONS)
     await interaction.response.send_message(
         embed=embed,
-        view=CalendarView(db, allowed_regions=ALLOWED_REGIONS),
+        view=CalendarView(db, allowed_regions=None),
         ephemeral=True,
     )
 
@@ -154,7 +158,7 @@ async def vgc_import(interaction: discord.Interaction):
     if channel is None:
         channel = await bot.fetch_channel(EVENT_CHANNEL_ID)
 
-    checked, imported, _ = await import_history(channel)
+    checked, imported = await import_history(channel)
     await interaction.followup.send(
         f"Import completato. Messaggi controllati: **{checked}** · "
         f"eventi nuovi/modificati: **{imported}**.",
