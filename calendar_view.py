@@ -359,9 +359,14 @@ class CalendarView(discord.ui.View):
         )
 
     def _rebuild_items(self):
-        self.clear_items()
-        self.add_item(EventSelect(self))
-        self.add_item(RegionSelect(self))
+        # Rimuove solo i menu dinamici, lasciando intatti
+        # i pulsanti definiti con @discord.ui.button.
+        for item in list(self.children):
+            if isinstance(item, discord.ui.Select):
+                self.remove_item(item)
+
+    self.add_item(EventSelect(self))
+    self.add_item(RegionSelect(self))
 
     async def redraw(self, interaction):
         self._rebuild_items()
