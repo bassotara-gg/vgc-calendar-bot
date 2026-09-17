@@ -192,7 +192,11 @@ def build_event_embed(db, e):
         inline=False,
     )
     if e["url"]:
-        em.add_field(name="🔗 Evento ufficiale", value=f"[Apri pagina Pokémon]({e['url']})", inline=False)
+        em.add_field(
+            name="🔗 Evento ufficiale",
+            value=f"[Apri pagina Pokémon]({e['url']})",
+            inline=False,
+        )
     return em
 
 
@@ -213,7 +217,9 @@ class EventSelect(discord.ui.Select):
             placeholder="Seleziona un torneo",
             min_values=1,
             max_values=1,
-            options=opts or [discord.SelectOption(label="Nessun evento", value="none")],
+            options=opts or [
+                discord.SelectOption(label="Nessun evento", value="none")
+            ],
             disabled=not opts,
             row=2,
         )
@@ -221,14 +227,24 @@ class EventSelect(discord.ui.Select):
     async def callback(self, interaction):
         if self.values[0] == "none":
             return
+
         event = next(
-            (x for x in self.calendar_view.db.get_all_events() if x["pokedata_id"] == self.values[0]),
+            (
+                x
+                for x in self.calendar_view.db.get_all_events()
+                if x["pokedata_id"] == self.values[0]
+            ),
             None,
         )
+
         if event:
             await interaction.response.edit_message(
                 embed=build_event_embed(self.calendar_view.db, event),
-                view=EventDetailView(self.calendar_view.db, event, self.calendar_view),
+                view=EventDetailView(
+                    self.calendar_view.db,
+                    event,
+                    self.calendar_view,
+                ),
             )
 
 
@@ -251,33 +267,67 @@ class EventDetailView(discord.ui.View):
             view=self,
         )
 
-    @discord.ui.button(label="🟢 Partecipo", style=discord.ButtonStyle.success, row=0)
+    @discord.ui.button(
+        label="🟢 Partecipo",
+        style=discord.ButtonStyle.success,
+        row=0,
+    )
     async def yes(self, interaction, button):
         await self.set_status(interaction, "yes")
 
-    @discord.ui.button(label="🟡 Forse", style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(
+        label="🟡 Forse",
+        style=discord.ButtonStyle.secondary,
+        row=0,
+    )
     async def maybe(self, interaction, button):
         await self.set_status(interaction, "maybe")
 
-    @discord.ui.button(label="🔴 Non partecipo", style=discord.ButtonStyle.danger, row=0)
+    @discord.ui.button(
+        label="🔴 Non partecipo",
+        style=discord.ButtonStyle.danger,
+        row=0,
+    )
     async def no(self, interaction, button):
         await self.set_status(interaction, "no")
 
-    @discord.ui.button(label="👥 Chi partecipa?", style=discord.ButtonStyle.primary, row=1)
+    @discord.ui.button(
+        label="👥 Chi partecipa?",
+        style=discord.ButtonStyle.primary,
+        row=1,
+    )
     async def who(self, interaction, button):
         lines = []
-        for status, title, icon in [("yes", "Partecipano", "🟢"), ("maybe", "Forse", "🟡"), ("no", "Non partecipano", "🔴")]:
-            names = self.db.get_attendees(self.event["pokedata_id"], status)
+
+        for status, title, icon in [
+            ("yes", "Partecipano", "🟢"),
+            ("maybe", "Forse", "🟡"),
+            ("no", "Non partecipano", "🔴"),
+        ]:
+            names = self.db.get_attendees(
+                self.event["pokedata_id"],
+                status,
+            )
             if names:
-                lines.append(f"{icon} **{title}:** " + ", ".join(names[:30]))
+                lines.append(
+                    f"{icon} **{title}:** " + ", ".join(names[:30])
+                )
+
         await interaction.response.send_message(
-            "\n".join(lines) if lines else "Nessuna partecipazione registrata.",
+            "\n".join(lines)
+            if lines
+            else "Nessuna partecipazione registrata.",
             ephemeral=True,
         )
 
-    @discord.ui.button(label="← Calendario", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(
+        label="← Calendario",
+        style=discord.ButtonStyle.secondary,
+        row=1,
+    )
     async def back(self, interaction, button):
         parent = self.parent
+
         await interaction.response.edit_message(
             embed=build_calendar_embed(
                 self.db.get_all_events(),
@@ -295,7 +345,10 @@ class EventDetailView(discord.ui.View):
 class RegionSelect(discord.ui.Select):
     def __init__(self, calendar_view):
         self.calendar_view = calendar_view
-        selected = {r.casefold() for r in calendar_view.regions}
+        selected = {
+            r.casefold()
+            for r in calendar_view.regions
+        }
 
         options = [
             discord.SelectOption(
@@ -305,6 +358,7 @@ class RegionSelect(discord.ui.Select):
                 default=not selected,
             )
         ]
+
         options += [
             discord.SelectOption(
                 label=region,
@@ -327,6 +381,7 @@ class RegionSelect(discord.ui.Select):
             self.calendar_view.regions = set()
         else:
             self.calendar_view.regions = set(self.values)
+
         await self.calendar_view.redraw(interaction)
 
 
@@ -365,11 +420,12 @@ class CalendarView(discord.ui.View):
             if isinstance(item, discord.ui.Select):
                 self.remove_item(item)
 
-    self.add_item(EventSelect(self))
-    self.add_item(RegionSelect(self))
+        self.add_item(EventSelect(self))
+        self.add_item(RegionSelect(self))
 
     async def redraw(self, interaction):
         self._rebuild_items()
+
         await interaction.response.edit_message(
             embed=build_calendar_embed(
                 self.db.get_all_events(),
@@ -383,39 +439,79 @@ class CalendarView(discord.ui.View):
             view=self,
         )
 
-    @discord.ui.button(label="◀", style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(
+        label="◀",
+        style=discord.ButtonStyle.secondary,
+        row=0,
+    )
     async def prev(self, interaction, button):
         self.month -= 1
+
         if self.month == 0:
             self.month, self.year = 12, self.year - 1
+
         await self.redraw(interaction)
 
-    @discord.ui.button(label="Oggi", style=discord.ButtonStyle.primary, row=0)
+    @discord.ui.button(
+        label="Oggi",
+        style=discord.ButtonStyle.primary,
+        row=0,
+    )
     async def today(self, interaction, button):
         now = date.today()
         self.year, self.month = now.year, now.month
+
         await self.redraw(interaction)
 
-    @discord.ui.button(label="▶", style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(
+        label="▶",
+        style=discord.ButtonStyle.secondary,
+        row=0,
+    )
     async def next(self, interaction, button):
         self.month += 1
+
         if self.month == 13:
             self.month, self.year = 1, self.year + 1
+
         await self.redraw(interaction)
 
-    @discord.ui.button(label="🌍 Tutte", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(
+        label="🌍 Tutte",
+        style=discord.ButtonStyle.secondary,
+        row=1,
+    )
     async def all(self, interaction, button):
         # "Tutte" means all event types and all regions.
         self.event_type = None
         self.regions = set()
+
         await self.redraw(interaction)
 
-    @discord.ui.button(label="🏆 Cup", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(
+        label="🏆 Cup",
+        style=discord.ButtonStyle.secondary,
+        row=1,
+    )
     async def cup(self, interaction, button):
-        self.event_type = None if self.event_type == "cup" else "cup"
+        self.event_type = (
+            None
+            if self.event_type == "cup"
+            else "cup"
+        )
+
         await self.redraw(interaction)
 
-    @discord.ui.button(label="⚔️ Challenge", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(
+        label="⚔️ Challenge",
+        style=discord.ButtonStyle.secondary,
+        row=1,
+    )
     async def challenge(self, interaction, button):
-        self.event_type = None if self.event_type == "challenge" else "challenge"
+        self.event_type = (
+            None
+            if self.event_type == "challenge"
+            else "challenge"
+        )
+
         await self.redraw(interaction)
