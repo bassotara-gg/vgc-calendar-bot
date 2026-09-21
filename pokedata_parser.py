@@ -1,210 +1,189 @@
 import re
 from datetime import datetime
 
-URL_RE = re.compile(r"https?://[^\s)>]+", re.I)
-ID_RE = re.compile(r"/(\d{2}-\d{2}-\d{6})/?(?:\?.*)?$", re.I)
+URL_RE = re.compile(r"https?://[^\s)>\]]+", re.I)
+ID_RE = re.compile(r"/(\d{2}-\d{2}-\d{6})/?(?:[\s\"'>]|$)", re.I)
+EVENT_RE = re.compile(r"\b(?:league\s+(?:cup|challenge)|(?:vg\s+)?league\s+(?:cup|challenge)|(?:league\s+(?:cup|challenge))\s+vg)\b", re.I)
 
 
-def _clean(s):
-    return re.sub(r"\s+", " ", s or "").strip()
+def _clean(value):
+    return re.sub(r"\s+", " ", str(value or "")).strip()
 
 
-def _extract_event_id(url):
-    if not url:
-        return ""
-    match = ID_RE.search(url.rstrip(".,)"))
-    return match.group(1) if match else ""
+def _strip_markdown(value):
+    value = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", value or "")
+    return _clean(value.replace("**", "").replace("__", ""))
 
 
-def _extract_pokemon_url(text):
-    for url in URL_RE.findall(text or ""):
-        clean = url.rstrip(".,)")
-        lower = clean.lower()
-        if "pokemon.com" in lower and "play-pokemon-tournaments" in lower:
-            return clean
+def _pokemon_url(value):
+    for url in URL_RE.findall(str(value or "")):
+        url = url.rstrip(".,)")
+        if "pokemon.com" in url.lower() and "play-pokemon-tournaments" in url.lower():
+            return url
     return ""
 
 
-def _event_from_values(*, title, description, fields, message_id):
-    """Parse one Pokedata Discord embed into an event dictionary."""
-    title = _clean(title)
-    description = _clean(description)
+def _event_id(url):
+    match = re.search(r"/(\d{2}-\d{2}-\d{6})/?(?:$|[?#\s])", url or "", re.I)
+    return match.group(1) if match else ""
 
-    lower_title = title.casefold()
-    if "league challenge" in lower_title and "pokemon" in lower_title:
-        event_type = "challenge"
-    elif "league cup" in lower_title and "pokemon" in lower_title:
-        event_type = "cup"
-    else:
-        # Pokedata's actual embed title contains the Pokémon URL even when
-        # the visible title text itself doesn't contain the word Pokémon.
-        if "league challenge" in lower_title:
-            event_type = "challenge"
-        elif "league cup" in lower_title:
-            event_type = "cup"
-        else:
-            return None
 
-    pokemon_url = _extract_pokemon_url(title)
-    if not pokemon_url:
-        return None
+def _event_type(value):
+    text = _clean(value).casefold()
+    if not EVENT_RE.search(text):
+        return ""
+    return "cup" if "cup" in text else "challenge"
 
-    pokedata_id = _extract_event_id(pokemon_url)
-    if not pokedata_id:
-        return None
 
-    field_map = {}
-    for name, value in fields:
-        field_map[_clean(name).casefold()] = _clean(value)
+def _field_from_text(text, label):
+    match = re.search(
+        rf"(?im)^\s*\*?\*?{re.escape(label)}\*?\*?\s*$\n\s*([^\n]+)",
+        text or "",
+    )
+    return _clean(match.group(1)) if match else ""
 
-    raw_date = field_map.get("date", "")
+
+def _parse_date(value):
+    value = _clean(value)
     try:
-        event_date = datetime.strptime(raw_date, "%Y-%m-%d").date().isoformat()
+        return datetime.strptime(value, "%Y-%m-%d").date().isoformat()
     except ValueError:
+        return ""
+
+
+def _make_event(message_id, event_type, name, url, city, region, address, organizer, raw_date):
+    url = _pokemon_url(url)
+    pokedata_id = _event_id(url)
+    event_date = _parse_date(raw_date)
+    if not event_type or not pokedata_id or not event_date or not city or not region:
         return None
-
-    city = field_map.get("city", "")
-    region = field_map.get("state", "")
-    address = field_map.get("address", "")
-    if not city or not region:
-        return None
-
-    # The Pokedata embed uses description for the organizer.
-    organizer = description
-
-    # Remove the URL from the title to obtain the event name.
-    name = re.sub(r"\s*https?://\S+", "", title, count=1, flags=re.I).strip()
-    name = _clean(name)
-
     return {
         "pokedata_id": pokedata_id,
         "type": event_type,
-        "name": name or f"VGC {'Cup' if event_type == 'cup' else 'Challenge'}",
+        "name": _strip_markdown(name) or f"VGC {'Cup' if event_type == 'cup' else 'Challenge'}",
         "date": event_date,
-        "city": city,
-        "region": region,
-        "address": address,
-        "organizer": organizer,
-        "url": pokemon_url,
+        "city": _clean(city),
+        "region": _clean(region),
+        "address": _clean(address),
+        "organizer": _clean(organizer),
+        "url": url,
         "source_message_id": str(message_id),
     }
 
 
 def _parse_embed(embed, message_id):
-    fields = []
+    title = _clean(getattr(embed, "title", ""))
+    description = _clean(getattr(embed, "description", ""))
+    embed_url = _clean(getattr(embed, "url", ""))
+
+    # Pokedata normally puts the Pokémon tournament URL in the embed URL or title.
+    combined_header = "\n".join(x for x in (title, description, embed_url) if x)
+    event_type = _event_type(combined_header)
+    pokemon_url = _pokemon_url(embed_url) or _pokemon_url(title) or _pokemon_url(description)
+    if not event_type or not pokemon_url:
+        return None
+
+    fields = {}
     for field in getattr(embed, "fields", []) or []:
-        fields.append((getattr(field, "name", ""), getattr(field, "value", "")))
+        field_name = _clean(getattr(field, "name", ""))
+        field_value = _clean(getattr(field, "value", ""))
+        if field_name:
+            fields[field_name.casefold()] = field_value
 
-    return _event_from_values(
-        title=getattr(embed, "title", "") or "",
-        description=getattr(embed, "description", "") or "",
-        fields=fields,
-        message_id=message_id,
+    # Discord embeds expose organizer as description in the Pokedata format.
+    # If description also contains the URL, strip the URL and formatting.
+    organizer = description
+    organizer = URL_RE.sub("", organizer)
+    organizer = _strip_markdown(organizer)
+
+    # The event name is the title before the Pokémon URL. Pokedata examples often
+    # use either "VG League Challenge ..." or "League Challenge VG ...".
+    name = title
+    name = URL_RE.sub("", name)
+    name = _strip_markdown(name)
+
+    return _make_event(
+        message_id,
+        event_type,
+        name,
+        pokemon_url,
+        fields.get("city", ""),
+        fields.get("state", ""),
+        fields.get("address", ""),
+        organizer,
+        fields.get("date", ""),
     )
 
 
-def _parse_text_message(message):
-    """Fallback parser for the older/text Pokedata format."""
-    text = message.content or ""
-    if not text:
-        return []
+def _parse_text_block(block, message_id):
+    # Fallback for older/non-embed Pokedata messages.
+    pokemon_url = _pokemon_url(block)
+    event_type = _event_type(block)
+    if not pokemon_url or not event_type:
+        return None
 
-    # Split on each Pokémon tournament URL/header. This fallback is kept for
-    # compatibility with older messages; current Pokedata events use embeds.
-    header_re = re.compile(
-        r"(?im)^.*?League\s+(Cup|Challenge)\s+VG.*?pokemon\.com.*?$"
+    lines = [x.strip() for x in (block or "").splitlines() if x.strip()]
+    header_index = next(
+        (i for i, line in enumerate(lines) if EVENT_RE.search(_strip_markdown(line))),
+        None,
     )
-    starts = [m.start() for m in header_re.finditer(text)]
-    if not starts:
-        return []
+    name = ""
+    organizer = ""
+    if header_index is not None:
+        candidates = []
+        for line in lines[header_index + 1 :]:
+            clean = _strip_markdown(line)
+            if not clean or _pokemon_url(line):
+                continue
+            if re.fullmatch(r"(?:country|state|address|date|city)", clean, re.I):
+                break
+            candidates.append(clean)
+        if candidates:
+            name = candidates[0]
+        if len(candidates) >= 2:
+            organizer = candidates[-1]
 
-    events = []
-    for i, start in enumerate(starts):
-        end = starts[i + 1] if i + 1 < len(starts) else len(text)
-        block = text[start:end]
-        lines = [x.strip() for x in block.splitlines() if x.strip()]
-        if not lines:
-            continue
-
-        header = header_re.search(block)
-        event_type = "cup" if header.group(1).casefold() == "cup" else "challenge"
-        pokemon_url = _extract_pokemon_url(block)
-        pokedata_id = _extract_event_id(pokemon_url)
-        if not pokedata_id:
-            continue
-
-        def field(label):
-            pattern = rf"\*?\*?{re.escape(label)}\*?\*?\s*\n\s*([^\n]+)"
-            match = re.search(pattern, block, re.I)
-            return _clean(match.group(1)) if match else ""
-
-        raw_date = field("Date")
-        try:
-            event_date = datetime.strptime(raw_date, "%Y-%m-%d").date().isoformat()
-        except ValueError:
-            continue
-
-        city = field("City")
-        region = field("State")
-        address = field("Address")
-        if not city or not region:
-            continue
-
-        header_line = next((line for line in lines if "League " in line and "VG" in line and "pokemon.com" in line.lower()), "")
-        header_index = lines.index(header_line) if header_line else 0
-        name = ""
-        if header_index + 1 < len(lines):
-            candidate = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", lines[header_index + 1])
-            candidate = candidate.replace("**", "").strip()
-            if candidate and "pokemon.com" not in candidate.lower():
-                name = candidate
-
-        country_index = next(
-            (i for i, line in enumerate(lines) if line.replace("*", "").strip().casefold() == "country"),
-            None,
-        )
-        organizer = ""
-        if country_index is not None:
-            candidates = []
-            for candidate in lines[header_index + 1:country_index]:
-                candidate = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", candidate)
-                candidate = candidate.replace("**", "").strip()
-                if candidate and "pokemon.com" not in candidate.lower():
-                    candidates.append(candidate)
-            if len(candidates) >= 2:
-                organizer = candidates[-1]
-
-        events.append({
-            "pokedata_id": pokedata_id,
-            "type": event_type,
-            "name": name or f"VGC {'Cup' if event_type == 'cup' else 'Challenge'}",
-            "date": event_date,
-            "city": city,
-            "region": region,
-            "address": address,
-            "organizer": organizer,
-            "url": pokemon_url,
-            "source_message_id": str(message.id),
-        })
-
-    return events
+    return _make_event(
+        message_id,
+        event_type,
+        name,
+        pokemon_url,
+        _field_from_text(block, "City"),
+        _field_from_text(block, "State"),
+        _field_from_text(block, "Address"),
+        organizer,
+        _field_from_text(block, "Date"),
+    )
 
 
 def parse_pokedata_message(message):
-    """Return every Cup/Challenge event contained in a Pokedata Discord message.
-
-    Current Pokedata messages use Discord embeds, so every embed is parsed
-    independently. The function also retains support for the older text format.
-    """
+    """Return every Cup/Challenge event contained in a Pokedata Discord message."""
     events = []
 
+    # Current Pokedata webhook format: one Discord message can contain multiple embeds.
     for embed in getattr(message, "embeds", []) or []:
         event = _parse_embed(embed, message.id)
         if event:
             events.append(event)
 
-    if not events and getattr(message, "content", ""):
-        events.extend(_parse_text_message(message))
+    # Fallback for old/plain-text webhook messages.
+    text = getattr(message, "content", "") or ""
+    if text:
+        events_in_text = []
+        # Split on event headers when possible; otherwise try the whole message.
+        matches = list(re.finditer(r"(?im)^.*?(?:league\s+(?:cup|challenge)|(?:vg\s+)?league\s+(?:cup|challenge)).*$", text))
+        if matches:
+            for index, match in enumerate(matches):
+                start = match.start()
+                end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+                event = _parse_text_block(text[start:end], message.id)
+                if event:
+                    events_in_text.append(event)
+        else:
+            event = _parse_text_block(text, message.id)
+            if event:
+                events_in_text.append(event)
+        events.extend(events_in_text)
 
     unique = {}
     for event in events:
